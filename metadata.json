@@ -1,0 +1,6 @@
+{
+  "name": "Reels Automator",
+  "description": "Automated shorts generator with high-impact dynamic subtitle animation, powered by Remotion and Whisper.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
