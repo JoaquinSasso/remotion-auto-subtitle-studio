@@ -11,7 +11,7 @@ import fs from 'fs';
  */
 export function renderVideo(videoPath, transcriptionData, userPreferences, callback) {
   const inputProps = JSON.stringify({
-    videoSrc: videoPath,
+    videoSrc: userPreferences.videoUrl || videoPath,
     subtitles: transcriptionData,
     config: {
       activeColor: userPreferences.activeColor || '#EAB308',

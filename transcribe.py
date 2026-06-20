@@ -3,7 +3,7 @@ import sys
 import json
 import argparse
 
-def transcribe(audio_path, language, model_size="base"):
+def transcribe(audio_path, language, model_size="turbo"):
     try:
         from faster_whisper import WhisperModel
     except ImportError:

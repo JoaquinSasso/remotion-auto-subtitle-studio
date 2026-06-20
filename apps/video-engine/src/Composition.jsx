@@ -1,4 +1,4 @@
-import { useCurrentFrame, useVideoConfig, Video, AbsoluteFill } from 'remotion';
+import { useCurrentFrame, useVideoConfig, OffthreadVideo, AbsoluteFill } from 'remotion';
 import { SubtitleBlock } from './SubtitleBlock';
 
 export const VideoComposition = ({ videoSrc, subtitles = [], config = {} }) => {
@@ -31,7 +31,7 @@ export const VideoComposition = ({ videoSrc, subtitles = [], config = {} }) => {
     <AbsoluteFill style={{ backgroundColor: '#000000', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
       {/* Underlying Video */}
       {videoSrc && (
-        <Video
+        <OffthreadVideo
           src={videoSrc}
           style={{
             width: '100%',

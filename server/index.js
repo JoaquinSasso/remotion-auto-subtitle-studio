@@ -151,7 +151,7 @@ app.post('/api/jobs/:id/render', (req, res) => {
     return res.status(404).json({ error: 'Trabajo no encontrado' });
   }
 
-  const { activeColor, inactiveColor, bounce, fontName, fontSize } = req.body;
+  const { activeColor, inactiveColor, bounce, fontName, fontSize, duration } = req.body;
   
   job.phase = 'rendering';
   job.status = 'processing';
@@ -163,7 +163,15 @@ app.post('/api/jobs/:id/render', (req, res) => {
   renderVideo(
     job.videoPath,
     job.transcription,
-    { activeColor, inactiveColor, bounce, fontName, fontSize },
+    {
+      activeColor,
+      inactiveColor,
+      bounce,
+      fontName,
+      fontSize,
+      duration,
+      videoUrl: `http://localhost:3000/api/jobs/${job.id}/video`
+    },
     (renderErr, outputPath) => {
       if (renderErr) {
         job.status = 'failed';
@@ -186,7 +194,9 @@ app.get('/api/jobs/:id/download', (req, res) => {
   if (!job || !job.outputPath || !fs.existsSync(job.outputPath)) {
     return res.status(404).json({ error: 'Video final no disponible' });
   }
-  res.download(job.outputPath, 'reels_automator_output.mp4');
+  res.attachment('reels_automator_output.mp4');
+  res.setHeader('Content-Type', 'video/mp4');
+  res.sendFile(job.outputPath);
 });
 
 // 7. Stream job video for UI preview
@@ -195,6 +205,7 @@ app.get('/api/jobs/:id/video', (req, res) => {
   if (!job || !fs.existsSync(job.videoPath)) {
     return res.status(404).json({ error: 'Video de origen no encontrado' });
   }
+  res.setHeader('Content-Type', 'video/mp4');
   res.sendFile(job.videoPath);
 });
 
@@ -204,6 +215,7 @@ app.get('/api/jobs/:id/output-video', (req, res) => {
   if (!job || !job.outputPath || !fs.existsSync(job.outputPath)) {
     return res.status(404).json({ error: 'Video final no encontrado' });
   }
+  res.setHeader('Content-Type', 'video/mp4');
   res.sendFile(job.outputPath);
 });
 
