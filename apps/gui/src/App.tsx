@@ -48,9 +48,12 @@ export default function App() {
   const [subtitles, setSubtitles] = useState<Word[]>([]);
   const [editingWordIndex, setEditingWordIndex] = useState<number | null>(null);
   const [editingText, setEditingText] = useState<string>('');
+  const [editingStart, setEditingStart] = useState<number>(0);
+  const [editingEnd, setEditingEnd] = useState<number>(0);
 
   // Video playback preview state
   const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [renderFinishedUrl, setRenderFinishedUrl] = useState<string>('');
 
@@ -99,15 +102,24 @@ export default function App() {
 
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
+    const handleLoadedMetadata = () => {
+      setDuration(video.duration || 0);
+    };
 
     video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('play', handlePlay);
     video.addEventListener('pause', handlePause);
+    video.addEventListener('loadedmetadata', handleLoadedMetadata);
+
+    if (video.duration) {
+      setDuration(video.duration);
+    }
 
     return () => {
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
     };
   }, [videoPreviewUrl, jobStatus]);
 
@@ -198,7 +210,8 @@ export default function App() {
           inactiveColor,
           bounce: bounceIntensity,
           fontName,
-          fontSize
+          fontSize,
+          duration
         })
       });
 
@@ -211,16 +224,8 @@ export default function App() {
     }
   };
 
-  // Update words on edit
-  const saveEditedWord = async (index: number) => {
-    if (editingText.trim() === '' || !jobId) return;
-
-    const updated = [...subtitles];
-    updated[index].text = editingText.toUpperCase();
-    setSubtitles(updated);
-    setEditingWordIndex(null);
-
-    // Sync back to server
+  const syncSubtitlesWithServer = async (updated: Word[]) => {
+    if (!jobId) return;
     try {
       await fetch(`/api/jobs/${jobId}/edit`, {
         method: 'POST',
@@ -230,8 +235,80 @@ export default function App() {
         body: JSON.stringify({ transcription: updated }),
       });
     } catch (err) {
-      console.error('Error synchronizing word edit:', err);
+      console.error('Error synchronizing subtitles:', err);
     }
+  };
+
+  const deleteWord = async (index: number) => {
+    if (!jobId) return;
+    const updated = subtitles.filter((_, idx) => idx !== index);
+    setSubtitles(updated);
+    setEditingWordIndex(null);
+    await syncSubtitlesWithServer(updated);
+  };
+
+  const addWordAfter = async (index: number) => {
+    if (!jobId) return;
+    const currentWord = subtitles[index];
+    const newWord: Word = {
+      text: 'NUEVA',
+      start: currentWord ? currentWord.end : 0,
+      end: currentWord ? parseFloat((currentWord.end + 0.5).toFixed(2)) : 0.5,
+    };
+    const updated = [...subtitles];
+    updated.splice(index + 1, 0, newWord);
+    setSubtitles(updated);
+    
+    // Auto-select the newly added word for editing
+    setEditingWordIndex(index + 1);
+    setEditingText('NUEVA');
+    setEditingStart(newWord.start);
+    setEditingEnd(newWord.end);
+
+    await syncSubtitlesWithServer(updated);
+  };
+
+  const addWordAtEnd = async () => {
+    if (!jobId) return;
+    const lastWord = subtitles[subtitles.length - 1];
+    const newWord: Word = {
+      text: 'NUEVA',
+      start: lastWord ? lastWord.end : 0,
+      end: lastWord ? parseFloat((lastWord.end + 0.5).toFixed(2)) : 0.5,
+    };
+    const updated = [...subtitles, newWord];
+    setSubtitles(updated);
+    
+    setEditingWordIndex(updated.length - 1);
+    setEditingText('NUEVA');
+    setEditingStart(newWord.start);
+    setEditingEnd(newWord.end);
+
+    await syncSubtitlesWithServer(updated);
+  };
+
+  const formatTime = (secs: number) => {
+    if (isNaN(secs)) return '0.00s';
+    return `${secs.toFixed(2)}s`;
+  };
+
+  // Update words on edit
+  const saveEditedWord = async (index: number) => {
+    if (editingText.trim() === '' || !jobId) return;
+    if (editingStart < 0 || editingEnd < 0 || editingStart > editingEnd) {
+      alert("El tiempo de inicio debe ser menor o igual al tiempo de fin, y ambos deben ser positivos.");
+      return;
+    }
+
+    const updated = [...subtitles];
+    updated[index] = {
+      text: editingText.toUpperCase(),
+      start: parseFloat(editingStart.toFixed(2)),
+      end: parseFloat(editingEnd.toFixed(2))
+    };
+    setSubtitles(updated);
+    setEditingWordIndex(null);
+    await syncSubtitlesWithServer(updated);
   };
 
   // Group subtitles in blocks of 3-4 words for live-preview calculation
@@ -457,29 +534,81 @@ export default function App() {
                     return (
                       <div key={idx} className="relative group">
                         {editingWordIndex === idx ? (
-                          <div className="flex items-center gap-1 border border-amber-500 bg-slate-900 rounded-lg p-1 z-10 shadow-lg">
-                            <input
-                              type="text"
-                              value={editingText}
-                              onChange={(e) => setEditingText(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') saveEditedWord(idx);
-                              }}
-                              className="bg-slate-950 border-0 focus:ring-0 outline-none p-1 text-xs text-white max-w-[80px]"
-                              autoFocus
-                            />
-                            <button
-                              onClick={() => saveEditedWord(idx)}
-                              className="bg-amber-500 text-black p-1 rounded hover:bg-amber-400 text-[10px] font-bold"
-                            >
-                              SÍ
-                            </button>
+                          <div className="flex flex-col gap-2 border border-amber-500 bg-slate-900 rounded-xl p-3 z-10 shadow-xl min-w-[210px]">
+                            <div className="flex items-center gap-2">
+                              <label className="text-[10px] text-slate-450 font-mono w-10">Texto:</label>
+                              <input
+                                type="text"
+                                value={editingText}
+                                onChange={(e) => setEditingText(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveEditedWord(idx);
+                                }}
+                                className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs text-white flex-1"
+                                autoFocus
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1 flex-1">
+                                <label className="text-[10px] text-slate-450 font-mono">Inic:</label>
+                                <input
+                                  type="number"
+                                  step="0.05"
+                                  value={editingStart}
+                                  onChange={(e) => setEditingStart(parseFloat(e.target.value) || 0)}
+                                  className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white w-full text-center"
+                                />
+                              </div>
+                              <div className="flex items-center gap-1 flex-1">
+                                <label className="text-[10px] text-slate-450 font-mono">Fin:</label>
+                                <input
+                                  type="number"
+                                  step="0.05"
+                                  value={editingEnd}
+                                  onChange={(e) => setEditingEnd(parseFloat(e.target.value) || 0)}
+                                  className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-xs text-white w-full text-center"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between gap-1 mt-1 pt-1.5 border-t border-slate-800">
+                              <button
+                                onClick={() => deleteWord(idx)}
+                                className="bg-red-500/20 text-red-400 hover:bg-red-650 hover:text-white px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1"
+                                title="Eliminar palabra"
+                              >
+                                <Trash2 className="w-3 h-3" /> Eliminar
+                              </button>
+                              
+                              <button
+                                onClick={() => addWordAfter(idx)}
+                                className="bg-emerald-500/20 text-emerald-450 hover:bg-emerald-500 hover:text-black px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1"
+                                title="Agregar palabra después"
+                              >
+                                <Plus className="w-3 h-3" /> Después
+                              </button>
+                            </div>
+                            <div className="flex items-center justify-end gap-1.5 mt-1 pt-1">
+                              <button
+                                onClick={() => setEditingWordIndex(null)}
+                                className="bg-slate-800 text-slate-300 hover:bg-slate-700 px-2 py-1 rounded text-[10px] font-bold"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                onClick={() => saveEditedWord(idx)}
+                                className="bg-amber-500 text-black hover:bg-amber-400 px-2.5 py-1 rounded text-[10px] font-bold"
+                              >
+                                Guardar
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <button
                             onClick={() => {
                               setEditingWordIndex(idx);
                               setEditingText(word.text);
+                              setEditingStart(word.start);
+                              setEditingEnd(word.end);
                             }}
                             className={`px-2.5 py-1.5 rounded-lg text-xs font-mono border transition-all flex items-center gap-1.5 ${
                               isActive 
@@ -498,7 +627,20 @@ export default function App() {
                       </div>
                     );
                   })}
+                  {subtitles.length === 0 && (
+                    <div className="text-center py-6 w-full text-slate-500 text-sm">
+                      No hay palabras. Añade una para comenzar.
+                    </div>
+                  )}
                 </div>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button
+                  onClick={addWordAtEnd}
+                  className="bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-850 text-slate-300 px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-all active:scale-[0.98]"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Agregar Palabra al Final
+                </button>
               </div>
             </div>
           )}
@@ -749,47 +891,73 @@ export default function App() {
 
             {/* Video Action Bar & Metadata */}
             {videoPreviewUrl && (
-              <div className="mt-4 pt-3 border-t border-slate-850 flex items-center justify-between gap-4">
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
+              <div className="mt-4 pt-3 border-t border-slate-850 flex flex-col gap-3">
+                {/* Timeline Seek Scrubber */}
+                <div className="flex items-center gap-3 w-full bg-slate-950/60 p-2.5 rounded-xl border border-slate-850/80">
+                  <span className="text-xs font-mono text-slate-400 min-w-[50px] text-right">{formatTime(currentTime)}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={duration || 100}
+                    step={0.01}
+                    value={currentTime}
+                    onChange={(e) => {
+                      const newTime = parseFloat(e.target.value);
                       if (videoRef.current) {
-                        if (isPlaying) {
-                          videoRef.current.pause();
-                        } else {
-                          videoRef.current.play();
-                        }
+                        videoRef.current.currentTime = newTime;
+                        setCurrentTime(newTime);
                       }
                     }}
-                    className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl text-white hover:bg-slate-90 shadow min-w-[42px] flex justify-center"
-                  >
-                    {isPlaying ? <Pause className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white" />}
-                  </button>
-                  
-                  <button
-                    onClick={() => {
-                      if (videoRef.current) {
-                        videoRef.current.currentTime = 0;
-                        setCurrentTime(0);
-                      }
+                    className="flex-1 h-1.5 bg-slate-800 rounded-full appearance-none cursor-pointer accent-amber-500 hover:accent-amber-400 focus:outline-none"
+                    style={{
+                      backgroundImage: `linear-gradient(to right, #eab308 0%, #eab308 ${(currentTime / (duration || 1)) * 100}%, #334155 ${(currentTime / (duration || 1)) * 100}%, #334155 100%)`
                     }}
-                    className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl text-slate-300 hover:bg-slate-900"
-                    title="Reiniciar video"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                  </button>
+                  />
+                  <span className="text-xs font-mono text-slate-400 min-w-[50px]">{formatTime(duration)}</span>
                 </div>
 
-                {jobStatus === 'completed' && renderFinishedUrl && (
-                  <a
-                    href={`/api/jobs/${jobId}/download`}
-                    className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-black py-2.5 px-4 font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/10 transition-all text-center"
-                    download
-                  >
-                    <Download className="w-4 h-4 stroke-[2.5]" />
-                    DESCARGAR SHORT FINAL
-                  </a>
-                )}
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        if (videoRef.current) {
+                          if (isPlaying) {
+                            videoRef.current.pause();
+                          } else {
+                            videoRef.current.play();
+                          }
+                        }
+                      }}
+                      className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl text-white hover:bg-slate-900 shadow min-w-[42px] flex justify-center cursor-pointer"
+                    >
+                      {isPlaying ? <Pause className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white" />}
+                    </button>
+                    
+                    <button
+                      onClick={() => {
+                        if (videoRef.current) {
+                          videoRef.current.currentTime = 0;
+                          setCurrentTime(0);
+                        }
+                      }}
+                      className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl text-slate-300 hover:bg-slate-900 cursor-pointer"
+                      title="Reiniciar video"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {jobStatus === 'completed' && renderFinishedUrl && (
+                    <a
+                      href={`/api/jobs/${jobId}/download`}
+                      className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-black py-2.5 px-4 font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/10 transition-all text-center"
+                      download
+                    >
+                      <Download className="w-4 h-4 stroke-[2.5]" />
+                      DESCARGAR SHORT FINAL
+                    </a>
+                  )}
+                </div>
               </div>
             )}
 

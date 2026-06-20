@@ -30,13 +30,38 @@ export function renderVideo(videoPath, transcriptionData, userPreferences, callb
 
   const outputPath = path.join(outputDir, 'final_short.mp4');
   const remotionRoot = path.resolve(process.cwd(), 'apps/video-engine/src/Root.jsx');
+  const remotionBin = path.resolve(process.cwd(), 'apps/video-engine/node_modules/@remotion/cli/remotion-cli.js');
+
+  // Write props to a temporary JSON file to avoid escaping and length limitations on Windows command line
+  const propsPath = path.join(process.cwd(), 'uploads', `props_${Date.now()}.json`);
+  try {
+    fs.writeFileSync(propsPath, inputProps, 'utf8');
+  } catch (writeErr) {
+    console.error('Failed to write temporary props file:', writeErr);
+    return callback(writeErr);
+  }
+
+  // Calculate dynamic duration in frames if provided by the client (default 30 seconds at 30 fps)
+  const durationInSeconds = parseFloat(userPreferences.duration) || 30;
+  const fps = 30;
+  const durationInFrames = Math.ceil(durationInSeconds * fps);
   
-  // Remotion render command
-  const cmd = `npx remotion render Composition "${remotionRoot}" --props='${inputProps}' "${outputPath}"`;
+  // Remotion render command using node binary path and correct arguments order:
+  // remotion render <entry-point> <composition-id> <output-path>
+  const cmd = `node "${remotionBin}" render "${remotionRoot}" Composition "${outputPath}" --props="${propsPath}" --duration=${durationInFrames}`;
   
   console.log(`Executing Remotion compile command: ${cmd}`);
   
   exec(cmd, (error, stdout, stderr) => {
+    // Delete temporary props file after execution
+    try {
+      if (fs.existsSync(propsPath)) {
+        fs.unlinkSync(propsPath);
+      }
+    } catch (unlinkErr) {
+      console.error('Failed to delete temporary props file:', unlinkErr);
+    }
+
     if (error) {
       console.warn("Remotion execution warning (falling back to server simulation):", stderr || error.message);
       
